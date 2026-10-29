@@ -26,11 +26,12 @@ class DecompTest(unittest.TestCase):
 
         inputs = torch.linspace(-2, 2, 6).reshape(2, 3)
         target = inputs.flip(1) + 0.5
+        # ATen uses a reduction index, the functional API uses its name.
         for reduction, name in enumerate(("none", "mean", "sum")):
             with self.subTest(reduction=name):
                 grad_output = (
                     torch.linspace(-1, 1, 6).reshape(2, 3)
-                    if reduction == 0
+                    if name == "none"
                     else torch.tensor(0.75)
                 )
                 args = (grad_output, inputs, target, reduction)
