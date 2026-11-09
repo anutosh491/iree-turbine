@@ -259,6 +259,13 @@ class TorchDevice:
             await asyncio.gather(*(value.result() for value in pending))
         _collect_storages()
 
+    def backend(self, graph_module, example_inputs):
+        """Compiler backend suitable for ``torch.compile(backend=device.backend)``."""
+        self._check()
+        from ..dynamo.backends.async_backend import make_backend
+
+        return make_backend(self)(graph_module, example_inputs)
+
     def close(self):
         """Close after awaiting ``synchronize()``."""
         global _active_device

@@ -17,8 +17,8 @@ from iree.compiler.extras.fx_importer import (
 )
 
 
-def _backend(gm: torch.fx.GraphModule, example_inputs):
-    """Generic backend which creates and preloads a launchable."""
+def _import_graph(gm: torch.fx.GraphModule, example_inputs):
+    """Import a decomposed FX graph, including Turbine custom operations."""
     # Export the graph module to mlir.
     gm = turbine_cpu_pass_pipeline(gm, example_inputs)
     output_node = next(node for node in gm.graph.nodes if node.op == "output")
@@ -38,6 +38,23 @@ def _backend(gm: torch.fx.GraphModule, example_inputs):
     logger.debug("Successfully imported gm to mlir:\n%s", module_op)
     expansion_pass = ExpandCustomOpsPass(module_op)
     expansion_pass.run()
+    return module_op, output_mask
+
+
+def _restore_none_outputs(outputs, output_mask):
+    if output_mask is None:
+        return outputs
+    if isinstance(outputs, torch.Tensor):
+        outputs = [outputs]
+    elif outputs is None:
+        outputs = []
+    values = iter(outputs)
+    return [next(values) if present else None for present in output_mask]
+
+
+def _backend(gm: torch.fx.GraphModule, example_inputs):
+    """Generic backend which creates and preloads a launchable."""
+    module_op, output_mask = _import_graph(gm, example_inputs)
 
     # determine a device to preload (compile) for
     device = None
@@ -77,15 +94,9 @@ def _backend(gm: torch.fx.GraphModule, example_inputs):
 
     launch.preload(device=device)
 
-    def call_func(*args):
-        results = launch(*[arg.data for arg in args], device=device)
-        if output_mask is None:
-            return results
-        if not isinstance(results, (tuple, list)):
-            results = (results,)
-        values = iter(results)
-        return [next(values) if present else None for present in output_mask]
-
+    call_func = lambda *args: _restore_none_outputs(
+        launch(*[arg.data for arg in args], device=device), output_mask
+    )
     return make_boxed_func(call_func)
 
 
