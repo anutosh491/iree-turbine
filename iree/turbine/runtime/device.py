@@ -12,6 +12,8 @@ from threading import local, Lock
 import os
 import warnings
 import platform
+import sys
+import struct
 import atexit
 
 import ctypes
@@ -627,6 +629,23 @@ DEVICE_TARGET_COMPILE_FLAGS: dict[str, tuple[str, ...]] = {
 # Aliases.
 DEVICE_TARGET_COMPILE_FLAGS["local-sync"] = DEVICE_TARGET_COMPILE_FLAGS["local-task"]
 
+if sys.platform == "emscripten":
+    _wasm_bits = struct.calcsize("P") * 8
+    _wasm_cpu_flags = (
+        "--iree-hal-target-device=local",
+        "--iree-hal-local-target-device-backends=llvm-cpu",
+        f"--iree-llvmcpu-target-triple=wasm{_wasm_bits}-unknown-emscripten",
+        "--iree-llvmcpu-target-cpu=generic",
+        "--iree-llvmcpu-target-cpu-features=+simd128",
+        "--iree-llvmcpu-link-embedded=false",
+        "--iree-llvmcpu-enable-ukernels=none",
+        "--iree-execution-model=async-external",
+        "--iree-opt-const-eval=false",
+        "--iree-opt-const-expr-hoisting=false",
+    )
+    DEVICE_TARGET_COMPILE_FLAGS["local-sync"] = _wasm_cpu_flags
+    DEVICE_TARGET_COMPILE_FLAGS["local-task"] = _wasm_cpu_flags
+
 # Make sure all tables have the same keys.
 assert (
     TORCH_TENSOR_IMPORTERS.keys() == DEVICE_TARGET_COMPILE_FLAGS.keys()
@@ -687,7 +706,9 @@ def get_device_from_torch(torch_device: torch.device) -> Device:
 def _create_device_from_torch(torch_device: torch.device) -> Optional[Device]:
     torch_type = torch_device.type
     if torch_type == "cpu":
-        cpu_driver = get_driver("local-task")
+        cpu_driver = get_driver(
+            "local-sync" if sys.platform == "emscripten" else "local-task"
+        )
         cpu_enumerated = cpu_driver.query_available_devices()
         assert len(cpu_enumerated) >= 1
         cpu_default = cpu_enumerated[0]
